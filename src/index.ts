@@ -37,6 +37,10 @@ const logger = winston.createLogger({
   ]
 });
 
+const encodePath = (filePath: string) => filePath.split('/').map(encodeURIComponent).join('/');
+const repoPath = (project: string, repository: string) =>
+  `/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(repository)}`;
+
 interface BitbucketActivity {
   action: string;
   [key: string]: unknown;
@@ -253,7 +257,7 @@ export class BitbucketServer {
     await this.server.connect(transport);
   }
 
-  private isPullRequestInput(args: unknown): args is PullRequestInput {
+  private isPullRequestInput(args: unknown): args is PullRequestInput & { repository: string } {
     const input = args as Partial<PullRequestInput>;
     return typeof args === 'object' &&
       args !== null &&
@@ -1093,10 +1097,10 @@ export class BitbucketServer {
     let endpoint: string;
     const params = { limit, start };
 
-    if (project || this.config.defaultProject) {
+    const projectKey = project || this.config.defaultProject;
+    if (projectKey) {
       // List repositories for a specific project
-      const projectKey = project || this.config.defaultProject;
-      endpoint = `/projects/${projectKey}/repos`;
+      endpoint = `/projects/${encodeURIComponent(projectKey)}/repos`;
     } else {
       // List all accessible repositories
       endpoint = '/repos';
@@ -1136,7 +1140,7 @@ export class BitbucketServer {
     };
   }
 
-  private async createPullRequest(input: PullRequestInput) {
+  private async createPullRequest(input: PullRequestInput & Required<RepositoryParams>) {
     const sourceProject = input.sourceProject ?? input.project;
     const sourceRepo = input.sourceRepository ?? input.repository;
 
@@ -1145,16 +1149,16 @@ export class BitbucketServer {
     if (input.includeDefaultReviewers !== false) {
       try {
         const targetRepoResponse = await this.api.get(
-          `/projects/${input.project}/repos/${input.repository}`
+          repoPath(input.project, input.repository)
         );
         const targetRepoId = targetRepoResponse.data.id;
 
         const sourceRepoId = sourceProject === input.project && sourceRepo === input.repository
           ? targetRepoId
-          : (await this.api.get(`/projects/${sourceProject}/repos/${sourceRepo}`)).data.id;
+          : (await this.api.get(repoPath(sourceProject, sourceRepo))).data.id;
 
         const defaultReviewersResponse = await this.api.get(
-          `/projects/${input.project}/repos/${input.repository}/reviewers`,
+          `${repoPath(input.project, input.repository)}/reviewers`,
           {
             baseURL: `${this.config.baseUrl}/rest/default-reviewers/1.0`,
             params: {
@@ -1181,7 +1185,7 @@ export class BitbucketServer {
     }
 
     const response = await this.api.post(
-      `/projects/${input.project}/repos/${input.repository}/pull-requests`,
+      `${repoPath(input.project, input.repository)}/pull-requests`,
       {
         title: input.title,
         description: input.description,
@@ -1219,7 +1223,7 @@ export class BitbucketServer {
     }
 
     const current = await this.api.get(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}`
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}`
     );
 
     const updated = {
@@ -1232,7 +1236,7 @@ export class BitbucketServer {
     };
 
     const response = await this.api.put(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}`,
       updated
     );
 
@@ -1252,7 +1256,7 @@ export class BitbucketServer {
     }
     
     const response = await this.api.get(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}`
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}`
     );
 
     return {
@@ -1274,12 +1278,12 @@ export class BitbucketServer {
 
     // Fetch current PR version for optimistic locking (required by Bitbucket Server API)
     const prResponse = await this.api.get(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}`
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}`
     );
     const version = prResponse.data.version;
 
     const response = await this.api.post(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/merge`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/merge`,
       {
         version,
         message,
@@ -1304,12 +1308,12 @@ export class BitbucketServer {
 
     // Fetch current PR version for optimistic locking (required by Bitbucket Server API)
     const prResponse = await this.api.get(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}`
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}`
     );
     const version = prResponse.data.version;
 
     const response = await this.api.post(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/decline`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/decline`,
       {
         version,
         message
@@ -1334,7 +1338,7 @@ export class BitbucketServer {
     const { text, parentId, state, severity } = options;
 
     const response = await this.api.post(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/comments`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/comments`,
       {
         text,
         parent: parentId ? { id: parentId } : undefined,
@@ -1361,7 +1365,7 @@ export class BitbucketServer {
     const { text, parentId, state, severity } = options;
 
     const response = await this.api.post(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/comments`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/comments`,
       {
         text,
         parent: parentId ? { id: parentId } : undefined,
@@ -1393,7 +1397,7 @@ export class BitbucketServer {
     }
 
     const response = await this.api.put(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/comments/${options.commentId}`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/comments/${encodeURIComponent(options.commentId)}`,
       {
         text: options.text,
         version: options.version,
@@ -1417,7 +1421,7 @@ export class BitbucketServer {
     }
 
     await this.api.delete(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/comments/${options.commentId}`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/comments/${encodeURIComponent(options.commentId)}`,
       { params: { version: options.version } }
     );
 
@@ -1437,7 +1441,7 @@ export class BitbucketServer {
     }
 
     const response = await this.api.put(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/review`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/review`,
       {
         commentText: options.commentText ?? null,
         ...(options.participantStatus && { participantStatus: options.participantStatus })
@@ -1460,7 +1464,7 @@ export class BitbucketServer {
     }
 
     const reportsResponse = await this.api.get(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/reports`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/reports`,
       { baseURL: `${this.config.baseUrl}/rest/insights/latest` }
     );
 
@@ -1474,7 +1478,7 @@ export class BitbucketServer {
       const reportKey = (report as { key: string }).key;
       try {
         const annotationsResponse = await this.api.get(
-          `/projects/${project}/repos/${repository}/pull-requests/${prId}/reports/${reportKey}/annotations`,
+          `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/reports/${encodeURIComponent(reportKey)}/annotations`,
           { baseURL: `${this.config.baseUrl}/rest/insights/latest` }
         );
         result.annotations[reportKey] = annotationsResponse.data.values ?? [];
@@ -1606,7 +1610,7 @@ export class BitbucketServer {
     }
     
     const response = await this.api.get(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/diff`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/diff`,
       {
         params: { contextLines },
         headers: { Accept: 'text/plain' }
@@ -1638,7 +1642,7 @@ export class BitbucketServer {
 
     while (!isLastPage) {
       const response = await this.api.get(
-        `/projects/${project}/repos/${repository}/pull-requests/${prId}/activities`,
+        `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/activities`,
         { params: { start: nextStart, limit: 100 } }
       );
       allValues.push(...(response.data.values as BitbucketActivity[]));
@@ -1682,7 +1686,7 @@ export class BitbucketServer {
     }
 
     const response = await this.api.get(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/activities`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/activities`,
       { params: apiParams }
     );
 
@@ -1735,7 +1739,7 @@ export class BitbucketServer {
     }
 
     const response = await this.api.get(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/activities`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/activities`,
       { params: apiParams }
     );
 
@@ -1775,7 +1779,7 @@ export class BitbucketServer {
     }
 
     const response = await this.api.get(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/activities`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/activities`,
       { params: apiParams }
     );
 
@@ -1922,7 +1926,7 @@ export class BitbucketServer {
     }
 
     const response = await this.api.get(
-      `/projects/${project}/repos/${repository}/browse/${filePath}`,
+      `${repoPath(project, repository)}/browse/${encodePath(filePath)}`,
       { params }
     );
 
@@ -1961,9 +1965,9 @@ export class BitbucketServer {
       params.at = branch;
     }
 
-    const browsePath = path ? `/${path}` : '';
+    const browsePath = path ? `/${encodePath(path)}` : '';
     const response = await this.api.get(
-      `/projects/${project}/repos/${repository}/browse${browsePath}`,
+      `${repoPath(project, repository)}/browse${browsePath}`,
       { params }
     );
 
@@ -2012,7 +2016,7 @@ export class BitbucketServer {
     }
 
     const response = await this.api.get(
-      `/projects/${project}/repos/${repository}/pull-requests`,
+      `${repoPath(project, repository)}/pull-requests`,
       { params }
     );
 
@@ -2086,8 +2090,8 @@ export class BitbucketServer {
 
     // Fetch branches and default branch in parallel
     const [branchesResponse, defaultBranchResponse] = await Promise.all([
-      this.api.get(`/projects/${project}/repos/${repository}/branches`, { params }),
-      this.api.get(`/projects/${project}/repos/${repository}/default-branch`).catch(() => null)
+      this.api.get(`${repoPath(project, repository)}/branches`, { params }),
+      this.api.get(`${repoPath(project, repository)}/default-branch`).catch(() => null)
     ]);
 
     const defaultBranchId = defaultBranchResponse?.data?.id;
@@ -2130,7 +2134,7 @@ export class BitbucketServer {
     }
 
     const response = await this.api.get(
-      `/projects/${project}/repos/${repository}/commits`,
+      `${repoPath(project, repository)}/commits`,
       { params }
     );
 
@@ -2181,7 +2185,7 @@ export class BitbucketServer {
     // Pre-check: prevent deletion of default branch
     try {
       const defaultBranchResponse = await this.api.get(
-        `/projects/${project}/repos/${repository}/default-branch`
+        `${repoPath(project, repository)}/default-branch`
       );
       if (defaultBranchResponse.data?.displayId === branch) {
         throw new McpError(
@@ -2196,7 +2200,7 @@ export class BitbucketServer {
     }
 
     // branch-utils API uses a different base path than /rest/api/1.0
-    const url = `${this.config.baseUrl}/rest/branch-utils/1.0/projects/${project}/repos/${repository}/branches`;
+    const url = `${this.config.baseUrl}/rest/branch-utils/1.0${repoPath(project, repository)}/branches`;
 
     await axios.delete(url, {
       data: { name: `refs/heads/${branch}` },
@@ -2233,7 +2237,7 @@ export class BitbucketServer {
     }
 
     const response = await this.api.post(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/approve`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/approve`,
       {},
       { headers: { 'Content-Type': 'application/json' } }
     );
@@ -2254,7 +2258,7 @@ export class BitbucketServer {
     }
 
     const response = await this.api.delete(
-      `/projects/${project}/repos/${repository}/pull-requests/${prId}/approve`,
+      `${repoPath(project, repository)}/pull-requests/${encodeURIComponent(prId)}/approve`,
       { headers: { 'Content-Type': 'application/json' } }
     );
 
