@@ -578,4 +578,130 @@ describe("BitbucketServer", () => {
       expect(parsed.values).toHaveLength(1);
     });
   });
+
+  describe("File paths", () => {
+    beforeEach(() => {
+      makeServer(BASE_ENV);
+    });
+
+    test.each([
+      ["docs/notes #1.md", "docs/notes%20%231.md"],
+      ["docs/what?.md", "docs/what%3F.md"],
+      ["reports/100%.txt", "reports/100%25.txt"],
+      ["src/index.ts", "src/index.ts"],
+    ])("get_file_content encodes %s", async (filePath, encoded) => {
+      mockApiGet.mockResolvedValueOnce(
+        createAxiosResponse({ isLastPage: true, size: 1, lines: [{ text: "x" }] }),
+      );
+
+      await callTool("get_file_content", {
+        project: "TEST",
+        repository: "repo",
+        filePath,
+      });
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        `/projects/TEST/repos/repo/browse/${encoded}`,
+        { params: { limit: 100, start: 0 } },
+      );
+    });
+
+    test("browse_repository encodes the path", async () => {
+      mockApiGet.mockResolvedValueOnce(
+        createAxiosResponse({ children: { values: [] } }),
+      );
+
+      await callTool("browse_repository", {
+        project: "TEST",
+        repository: "repo",
+        path: "docs/a #b?/100%",
+      });
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        "/projects/TEST/repos/repo/browse/docs/a%20%23b%3F/100%25",
+        { params: { limit: 50 } },
+      );
+    });
+
+    test("browse_repository requests the root when no path is given", async () => {
+      mockApiGet.mockResolvedValueOnce(
+        createAxiosResponse({ children: { values: [] } }),
+      );
+
+      await callTool("browse_repository", { project: "TEST", repository: "repo" });
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        "/projects/TEST/repos/repo/browse",
+        { params: { limit: 50 } },
+      );
+    });
+  });
+
+  describe("Path segments", () => {
+    beforeEach(() => {
+      makeServer(BASE_ENV);
+    });
+
+    test("list_repositories encodes the project key", async () => {
+      mockApiGet.mockResolvedValueOnce(
+        createAxiosResponse({ values: [], size: 0, isLastPage: true }),
+      );
+
+      await callTool("list_repositories", { project: "~john doe" });
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        "/projects/~john%20doe/repos",
+        expect.anything(),
+      );
+    });
+
+    test("create_pull_request encodes the project and repository", async () => {
+      mockApiPost.mockResolvedValueOnce(createAxiosResponse({ id: 1 }));
+
+      await callTool("create_pull_request", {
+        project: "~john doe",
+        repository: "my repo#1",
+        title: "Test PR",
+        sourceBranch: "feature",
+        targetBranch: "main",
+        includeDefaultReviewers: false,
+      });
+
+      expect(mockApiPost).toHaveBeenCalledWith(
+        "/projects/~john%20doe/repos/my%20repo%231/pull-requests",
+        expect.anything(),
+      );
+    });
+
+    test("get_pull_request encodes every segment", async () => {
+      mockApiGet.mockResolvedValueOnce(createAxiosResponse({ id: 7 }));
+
+      await callTool("get_pull_request", {
+        project: "TE ST",
+        repository: "re?po",
+        prId: 7,
+      });
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        "/projects/TE%20ST/repos/re%3Fpo/pull-requests/7",
+      );
+    });
+
+    test("get_file_content encodes the project and repository", async () => {
+      mockApiGet.mockResolvedValueOnce(
+        createAxiosResponse({ isLastPage: true, size: 1, lines: [{ text: "x" }] }),
+      );
+
+      await callTool("get_file_content", {
+        project: "~john doe",
+        repository: "my repo",
+        filePath: "README.md",
+      });
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        "/projects/~john%20doe/repos/my%20repo/browse/README.md",
+        { params: { limit: 100, start: 0 } },
+      );
+    });
+  });
 });
