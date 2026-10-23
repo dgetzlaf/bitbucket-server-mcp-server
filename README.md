@@ -167,6 +167,25 @@ Parameters:
 - `repository` (required): Repository slug
 - `prId` (required): Pull request ID
 
+### `get_build_status`
+
+Read build states and CI build URLs, including Jenkins links, for a commit.
+Uses the existing Bitbucket credentials and supports read-only mode.
+
+Parameters:
+
+- `commitHash` (required): Full 40-character commit hash; use the PR's `fromRef.latestCommit`.
+- `limit`: Statuses per page (default: 25, max: 100).
+- `start`: Page offset (default: 0); use `nextPageStart` to fetch the next page.
+
+Calls `GET /rest/build-status/1.0/commits/{commitHash}` and returns the
+Bitbucket response, including each build's `state` and `url`. An empty list
+means no build statuses are recorded. API/authentication failures are reported
+as errors, not empty lists.
+
+After rebuilding a local installation with `npm run build`, restart its MCP
+connection in your client to discover the new tool. No credential changes are needed.
+
 ### `merge_pull_request`
 
 **Integrate approved changes**: Merges an approved pull request into the target branch. Supports different merge strategies based on your workflow preferences.

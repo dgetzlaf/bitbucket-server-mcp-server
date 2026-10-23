@@ -16,6 +16,7 @@ const mockAxios = {
 vi.mock("axios", () => ({
   default: {
     create: vi.fn(() => mockAxios),
+    isAxiosError: vi.fn(() => false),
   },
   isAxiosError: vi.fn(),
 }));
@@ -98,6 +99,7 @@ describe("BitbucketServer Integration Tests", () => {
         "delete_comment",
         "publish_review",
         "get_code_insights",
+        "get_build_status",
         "get_dashboard_pull_requests",
         "update_pull_request",
       ];
@@ -750,6 +752,91 @@ describe("BitbucketServer Integration Tests", () => {
         "/projects/TEST/repos/my-repo/pull-requests/1/comments/789",
         { text: "Now a task", version: 0, severity: "BLOCKER" },
       );
+    });
+  });
+
+  describe("get_build_status tool", () => {
+    const commitHash = "a".repeat(40);
+
+    test("should return build states, Jenkins URLs and pagination", async () => {
+      const data = {
+        size: 1,
+        isLastPage: false,
+        nextPageStart: 1,
+        values: [{
+          key: "jenkins",
+          state: "SUCCESSFUL",
+          url: "https://ci.example.com/job/my-repo/42/",
+        }],
+      };
+      mockAxios.get.mockResolvedValueOnce({ data });
+
+      const result = await client.callTool({
+        name: "get_build_status",
+        arguments: { commitHash, limit: 1, start: 2 },
+      });
+
+      const content = result.content as Array<{ type: string; text: string }>;
+      expect(JSON.parse(content[0].text)).toEqual(data);
+      expect(mockAxios.get).toHaveBeenCalledWith(`/commits/${commitHash}`, {
+        baseURL: "https://bb.example.com/rest/build-status/1.0",
+        params: { limit: 1, start: 2 },
+      });
+    });
+
+    test("should keep empty build status lists and use default pagination", async () => {
+      const data = { size: 0, isLastPage: true, values: [] };
+      mockAxios.get.mockResolvedValueOnce({ data });
+
+      const result = await client.callTool({
+        name: "get_build_status",
+        arguments: { commitHash },
+      });
+
+      const content = result.content as Array<{ type: string; text: string }>;
+      expect(JSON.parse(content[0].text)).toEqual(data);
+      expect(mockAxios.get).toHaveBeenCalledWith(`/commits/${commitHash}`, {
+        baseURL: "https://bb.example.com/rest/build-status/1.0",
+        params: { limit: 25, start: 0 },
+      });
+    });
+
+    test.each([
+      {},
+      { commitHash: "../other" },
+      { commitHash, limit: 0 },
+      { commitHash, limit: 101 },
+      { commitHash, limit: 1.5 },
+      { commitHash, start: -1 },
+      { commitHash, start: 0.5 },
+    ])("should reject invalid input without calling Bitbucket: %j", async (args) => {
+      const result = await client.callTool({
+        name: "get_build_status",
+        arguments: args,
+      }).catch((error: unknown) => error);
+
+      expect(result).toBeDefined();
+      expect(mockAxios.get).not.toHaveBeenCalled();
+      expect(result instanceof Error || (
+        typeof result === "object" && result !== null &&
+        "isError" in result && result.isError === true
+      )).toBe(true);
+    });
+
+    test("should surface API failures instead of returning an empty list", async () => {
+      mockAxios.get.mockRejectedValueOnce(new Error("Unauthorized"));
+
+      const result = await client.callTool({
+        name: "get_build_status",
+        arguments: { commitHash },
+      }).catch((error: unknown) => error);
+
+      expect(result instanceof Error || (
+        typeof result === "object" && result !== null &&
+        "isError" in result && result.isError === true
+      )).toBe(true);
+      expect(String(result instanceof Error ? result.message : JSON.stringify(result)))
+        .toContain("Unauthorized");
     });
   });
 
