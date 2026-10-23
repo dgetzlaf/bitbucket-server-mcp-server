@@ -271,7 +271,7 @@ export class BitbucketServer {
   }
 
   private setupToolHandlers() {
-    const readOnlyTools = ['list_projects', 'list_repositories', 'get_pull_request', 'list_pull_requests', 'get_diff', 'get_reviews', 'get_activities', 'get_comments', 'search', 'get_file_content', 'browse_repository', 'list_branches', 'list_commits', 'get_code_insights', 'get_dashboard_pull_requests'];
+    const readOnlyTools = ['list_projects', 'list_repositories', 'get_pull_request', 'list_pull_requests', 'get_diff', 'get_reviews', 'get_activities', 'get_comments', 'search', 'get_file_content', 'browse_repository', 'list_branches', 'list_commits', 'get_code_insights', 'get_build_status', 'get_dashboard_pull_requests'];
     
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
@@ -695,6 +695,19 @@ export class BitbucketServer {
           }
         },
         {
+          name: 'get_build_status',
+          description: 'Get build states and CI build URLs (including Jenkins links) for a commit using the authenticated Bitbucket connection. Use the pull request fromRef.latestCommit as commitHash. Returns a paginated list; an empty list means no build statuses are recorded, not a successful build.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              commitHash: { type: 'string', pattern: '^[0-9a-fA-F]{40}$', description: 'Full 40-character commit hash, usually the pull request fromRef.latestCommit.' },
+              limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Number of build statuses per page (default: 25, max: 100).' },
+              start: { type: 'integer', minimum: 0, description: 'Page offset (default: 0). Use nextPageStart from the previous response.' }
+            },
+            required: ['commitHash']
+          }
+        },
+        {
           name: 'get_dashboard_pull_requests',
           description: 'List pull requests across all repositories for the authenticated user. Use this to see PRs you need to review, PRs you authored, or PRs you are participating in. Returns PRs from all projects and repositories without needing to specify each one.',
           inputSchema: {
@@ -1031,6 +1044,18 @@ export class BitbucketServer {
               prId: args.prId as number
             };
             return await this.getCodeInsights(insightsPrParams);
+          }
+
+          case 'get_build_status': {
+            const { commitHash, limit = 25, start = 0 } = args;
+            if (typeof commitHash !== 'string' || !/^[0-9a-fA-F]{40}$/.test(commitHash)) {
+              throw new McpError(ErrorCode.InvalidParams, 'commitHash must be a full 40-character hexadecimal commit hash');
+            }
+            if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100 ||
+                typeof start !== 'number' || !Number.isInteger(start) || start < 0) {
+              throw new McpError(ErrorCode.InvalidParams, 'limit must be an integer from 1 to 100 and start must be a non-negative integer');
+            }
+            return await this.getBuildStatus(commitHash, { limit, start });
           }
 
           case 'get_dashboard_pull_requests': {
@@ -1489,6 +1514,17 @@ export class BitbucketServer {
 
     return {
       content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+    };
+  }
+
+  private async getBuildStatus(commitHash: string, options: ListOptions) {
+    const response = await this.api.get(`/commits/${commitHash}`, {
+      baseURL: `${this.config.baseUrl}/rest/build-status/1.0`,
+      params: options
+    });
+
+    return {
+      content: [{ type: 'text', text: JSON.stringify(response.data, null, 2) }]
     };
   }
 
